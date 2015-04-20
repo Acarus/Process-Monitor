@@ -16,6 +16,8 @@ class LoggerOutput {
  @param str log message string
  */
   virtual void Write(const std::wstring& str) = 0;
+
+  virtual ~LoggerOutput(){}
 };
 
 }

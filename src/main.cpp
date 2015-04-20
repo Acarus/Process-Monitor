@@ -3,6 +3,7 @@
 #include "LoggerFileOutput.h"
 #include "ProcessMonitor.h"
 #include <iostream>
+#include <memory>
 
 using namespace std;
 using namespace monitor;
@@ -27,6 +28,11 @@ void OnProcAttached(DWORD p_id) {
 	wcout << L"Successfully attached to process(id = " <<p_id << L")" << endl;
 }
 
+// OnProcAttachFailure event callback
+void OnProcAttachFailure(DWORD p_id) {
+	wcout << L"Can't attach to process(id = " <<p_id << L")" << endl;
+}
+
 // OnProcExitSuccess event callback
 void OnProcExitSuccess(DWORD p_id) {
 	wcout << L"Process(id = " << p_id << L") is completed successfully" << endl;
@@ -48,33 +54,33 @@ void OnProcResumed(DWORD p_id) {
 }
 
 int main(int argc, wchar_t** argv) {
-	ProcessMonitor monitor;
-
-	// instance logger
-	Logger *logger = new Logger();
-	logger->SetOutputTo(new LoggerFileOutput(L"log.txt"));
-	logger->SetFormat(L":day/:month/:year :hour::minute::second [Process Monitor]: :msg");
+	ProcessMonitor monitor(L"C:\\windows\\system32\\calc.exe");
 	
+	// instance logger
+	shared_ptr<Logger> logger = make_shared<Logger>();
+	logger->SetOutputTo(new LoggerFileOutput(L"log.txt"));
+	logger->SetFormat(L":day/:month/:year :hour::minute::second [Process Monitor]: :msg");	
+
 	monitor.SetLogger(logger);
 
 	// instance event manager
-	EventManager *event_manager = new EventManager();
+	shared_ptr<EventManager> event_manager = make_shared<EventManager>();
 	monitor.SetEventManager(event_manager);
-
-	// set events that we want 
+	// set events that we want listen 
 	event_manager->Bind(L"OnProcStart", OnProcStart);
 	event_manager->Bind(L"OnProcRestart", OnProcRestart); 
-	event_manager->Bind(L"OnProcAttached", OnProcAttached); 
+ 	event_manager->Bind(L"OnProcAttached", OnProcAttached); 
+	event_manager->Bind(L"OnProcAttachFailure", OnProcAttachFailure); 
 	event_manager->Bind(L"OnProcExitSuccess", OnProcExitSuccess);
 	event_manager->Bind(L"OnProcExitFailure", OnProcExitFailure);
 	event_manager->Bind(L"OnProcStopped", OnProcStopped);
 	event_manager->Bind(L"OnProcResumed", OnProcResumed);
 
 	// start/attach process
-	// monitor.AttachTo(3940);
+	//monitor.AttachTo(4760);
 	monitor.Start(L"C:\\windows\\system32\\calc.exe"/*, L"log.txt"*/);
 	getchar();
-	
+
 	// restart this process
 	monitor.Restart();
 	getchar();
@@ -83,7 +89,7 @@ int main(int argc, wchar_t** argv) {
 	monitor.Stop();
 	getchar();
 
-	// and start it again
+	// resume it
 	monitor.Start();
 	getchar();
 

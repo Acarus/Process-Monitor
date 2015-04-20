@@ -24,7 +24,6 @@ class EventManager {
   std::thread _event_thread;
   std::mutex _event_mutex;
   bool _work;
-  int _count_of_link;
 
   void _EventManagerFunc();
  public:
@@ -44,16 +43,6 @@ class EventManager {
 @param func callback function
 */
   void Bind(const std::wstring& e, callback func);
-
-/**
-@brief Increment count of links to object  
-*/
-  void AddRef();
- 
-/**
-@brief Decrement count of links to object. If count equal zero object would be deleted  
-*/
-  void Release();
 };
 
 }

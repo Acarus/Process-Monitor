@@ -2,11 +2,10 @@
 
 namespace monitor {
 
-Logger::Logger() : _log_format(L":day.:month.:year :hour::minute::second : :msg"), _output(nullptr), _count_of_link(0) { }
+Logger::Logger() : _log_format(L":day.:month.:year :hour::minute::second : :msg"), _output(nullptr){ }
 
 Logger::~Logger() {
-	if(this->_output != nullptr)
-		delete this->_output;
+	if(this->_output != nullptr) delete this->_output;
 }
 
 
@@ -53,8 +52,7 @@ void Logger::Log(const std::wstring& msg) {
 		formated_string.replace(pos, 7, this->_ToString(date_time.wSecond));
 
 	// Write log to output device
-	if(this->_output != nullptr)
-		this->_output->Write(formated_string);
+	if(this->_output != nullptr) this->_output->Write(formated_string);
 
 }
 
@@ -67,16 +65,6 @@ std::wstring Logger::_ToString(int num) {
 
 void Logger::SetOutputTo(LoggerOutput *output) {
 	this->_output = output;
-}
-
-void Logger::AddRef() {
-	this->_count_of_link++;
-}
-
-void Logger::Release() {
-	this->_count_of_link--;
-
-	if(this->_count_of_link == 0) delete this; 
 }
 
 }

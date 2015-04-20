@@ -12,7 +12,6 @@ namespace monitor {
 class Logger {
   std::wstring _log_format;
   LoggerOutput *_output;
-  int _count_of_link;
 
   std::wstring _ToString(int num);
 
@@ -37,16 +36,6 @@ class Logger {
 @param output output device  
 */
   void SetOutputTo(LoggerOutput *output);
-
-/**
-@brief Increment count of links to object  
-*/
-  void AddRef();
- 
-/**
-@brief Decrement count of links to object. If count equal zero object would be deleted  
-*/
-  void Release();
 };
 
 }

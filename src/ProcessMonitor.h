@@ -10,6 +10,7 @@
 #include <sstream>
 #include <thread>
 #include <mutex>
+#include <memory>
 
 #define LOG_IT(msg) if(this->_logger != nullptr) this->_logger->Log(msg)
 #define EMIT(e, p_id) if(this->_event_manager != nullptr) this->_event_manager->GenerateEvent(e, p_id)
@@ -46,11 +47,11 @@ struct ProcessInfo {
 */
 class ProcessMonitor {
   std::wstring _cmd_line;
-  HANDLE _hande;
+  HANDLE _handle;
   State _state;
   DWORD _p_id;
-  Logger *_logger;
-  EventManager *_event_manager;
+  std::shared_ptr<Logger> _logger;
+  std::shared_ptr<EventManager> _event_manager;
   bool _watching;
   std::thread _monitor_thread;
   std::mutex _m_mutex;
@@ -58,6 +59,7 @@ class ProcessMonitor {
   void _MonitoringProcess();
   void _Restart();
   bool _StopResumeProcess(DWORD p_id, bool resume);
+  std::wstring _FormatedString(std::wstring source, int p_id);
  public:
   ProcessMonitor(std::wstring path = L"", std::wstring args = L"");
   ~ProcessMonitor(void);
@@ -90,9 +92,9 @@ class ProcessMonitor {
 */ 
   void AttachTo(DWORD p_id);
 
-  void SetLogger(Logger *logger);
+  void SetLogger(std::shared_ptr<Logger> logger);
  
-  void SetEventManager(EventManager *event_manager);
+  void SetEventManager(std::shared_ptr<EventManager> event_manager);
 
  };
 }

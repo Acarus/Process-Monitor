@@ -2,22 +2,22 @@
 
 namespace monitor {
 
-LoggerFileOutput::LoggerFileOutput(std::wstring log_file) : _log_file(log_file) { }
-
-void LoggerFileOutput::Write(const std::wstring& str) {
-
-	std::wofstream log_file;
+LoggerFileOutput::LoggerFileOutput(std::wstring file_name) { 
 	// open file
-	log_file.open(this->_log_file, std::ios_base::app);
-
-	if(log_file.is_open()) {
-		log_file << str << std::endl;
-		log_file.close();
-	}
+	if(file_name.size() > 0) this->_log_file.open(file_name, std::ios_base::app);
 }
 
-void LoggerFileOutput::SetFile(const std::wstring& log_file) {
-	this->_log_file = log_file;
+LoggerFileOutput::~LoggerFileOutput() {
+	if(this->_log_file.is_open()) this->_log_file.close();
+}
+
+void LoggerFileOutput::Write(const std::wstring& str) {
+	if(this->_log_file.is_open()) this->_log_file << str << std::endl;
+}
+
+void LoggerFileOutput::SetFile(const std::wstring& file_name) {
+	if(this->_log_file.is_open()) this->_log_file.close();
+	this->_log_file.open(file_name, std::ios_base::app);
 }
 
 }

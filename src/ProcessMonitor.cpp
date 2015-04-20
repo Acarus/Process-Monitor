@@ -7,180 +7,143 @@ ProcessMonitor::ProcessMonitor(std::wstring path, std::wstring args)
 	_logger(nullptr),
 	_event_manager(nullptr),
 	_monitor_thread(),
-	_hande(NULL),
+	_handle(NULL),
 	_m_mutex() {				
 }
 
 
 ProcessMonitor::~ProcessMonitor(void) {
-	if(this->_logger != nullptr) this->_logger->Release();
-	if(this->_event_manager != nullptr) this->_event_manager->Release();
-
 	this->_watching = false;
 	if(this->_monitor_thread.joinable()) this->_monitor_thread.join();
-	
-	CloseHandle(this->_hande);
+	if(this->_handle != NULL) CloseHandle(this->_handle);
 }
 
 void ProcessMonitor::Start(std::wstring path, std::wstring args) { 
-	// if we want start new process
-	if(path.size() > 0) { 
-		this->_cmd_line = path+L" "+args;
-	} else { 
-		// resume already stared process
-		// get current state and process id
+	// resume already started process
+	if(this->_state == State::STOPPED && path.size() == 0) {
 		this->_m_mutex.lock();
-		State state = this->_state;
-		DWORD p_id = this->_p_id;
-		this->_m_mutex.unlock();
-
-		// resume process
-		if(state == State::STOPPED) {
-			std::wstringstream ss;
-
-			if(this->_StopResumeProcess(p_id, true)) {
-				// set state "Working"
-				this->_m_mutex.lock();
+		if(this->_StopResumeProcess(this->_p_id, true)) {
 				this->_state = State::WORKING;
-				this->_m_mutex.unlock();
-
-				ss << L"Successfully resumed process(id = " << p_id << L")";
-				LOG_IT(ss.str());
-				EMIT(L"OnProcResumed", p_id);
+				LOG_IT(_FormatedString(L"Successfully resumed process(id = :p_id)", this->_p_id));
+				EMIT(L"OnProcResumed", this->_p_id);
 			} else {
-				ss << L"Could not resume process(id = " << p_id << L")";
-				LOG_IT(ss.str());
+				LOG_IT(_FormatedString(L"Could not resume process(id = :p_id)", this->_p_id));
 			}
-			return;
-		}
-	}
-
-	// start process
-	STARTUPINFO si = {};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi = {};
-
-	if (CreateProcess(0, (LPWSTR)this->_cmd_line.c_str(), 0, FALSE, 0, 0, 0, 0, &si, &pi)) {		
-		this->_m_mutex.lock();
-		this->_state = State::WORKING;
-		this->_p_id = pi.dwProcessId;
-		this->_hande = pi.hProcess;
 		this->_m_mutex.unlock();
-
-		// start monitoring thread
-		if(!this->_monitor_thread.joinable()) {
-			this->_watching = true;
-			this->_monitor_thread = std::thread(&ProcessMonitor::_MonitoringProcess, this);
-		}
-
-		LOG_IT(L"Started process( cmd line = "+this->_cmd_line+L")");
-		EMIT(L"OnProcStart", this->_p_id);
 
 	} else {
-		LOG_IT(L"Can't start process");		
+		// If the process is already running close handle
+		if(this->_state == State::WORKING) {
+			this->_m_mutex.lock();
+			CloseHandle(this->_handle);
+			this->_handle = NULL;
+			this->_m_mutex.unlock();
+		}
+
+		// set cmd line
+		if(path.size() > 0)  this->_cmd_line = path+L" "+args;
+
+		// start process
+		STARTUPINFO si = {};
+		si.cb = sizeof(si);
+		PROCESS_INFORMATION pi = {};
+
+		if (CreateProcess(0, (LPWSTR)this->_cmd_line.c_str(), 0, FALSE, 0, 0, 0, 0, &si, &pi)) {		
+			this->_m_mutex.lock();
+		
+			this->_state = State::WORKING;
+			this->_p_id = pi.dwProcessId;
+			this->_handle = pi.hProcess;
+			
+			// start monitoring thread
+			if(!this->_monitor_thread.joinable()) {
+				this->_watching = true;
+				this->_monitor_thread = std::thread(&ProcessMonitor::_MonitoringProcess, this);
+			}
+			this->_m_mutex.unlock();
+
+			LOG_IT(L"Started process( cmd line = "+this->_cmd_line+L")");
+			EMIT(L"OnProcStart", this->_p_id);
+
+		} else {
+			LOG_IT(L"Can't start process");		
+		}
 	}
 }
   
 ProcessInfo ProcessMonitor::GetProcessInfo() {
-	this->_m_mutex.lock();
-	ProcessInfo info = ProcessInfo(this->_hande, this->_p_id, this->_state);
-	this->_m_mutex.unlock();
-
+	std::lock_guard<std::mutex> lock(this->_m_mutex);
+	ProcessInfo info = ProcessInfo(this->_handle, this->_p_id, this->_state);
 	return info;
 }
  
-void ProcessMonitor::SetLogger(Logger *logger) {
-	this->_m_mutex.lock();
+void ProcessMonitor::SetLogger(std::shared_ptr<Logger> logger) {
 	this->_logger = logger;
-	this->_logger->AddRef();
-	this->_m_mutex.unlock();
 }
 
-void ProcessMonitor::SetEventManager(EventManager *event_manager) {
-	this->_m_mutex.lock();
+void ProcessMonitor::SetEventManager(std::shared_ptr<EventManager> event_manager) {
 	this->_event_manager = event_manager;
-	this->_event_manager->AddRef();
 	// set events that we want generate
 	this->_event_manager->AddEvent(L"OnProcStart");
 	this->_event_manager->AddEvent(L"OnProcExitFailure");
 	this->_event_manager->AddEvent(L"OnProcExitSuccess");
 	this->_event_manager->AddEvent(L"OnProcAttached");
+	this->_event_manager->AddEvent(L"OnProcAttachFailure");
 	this->_event_manager->AddEvent(L"OnProcRestart");
 	this->_event_manager->AddEvent(L"OnProcStopped");
 	this->_event_manager->AddEvent(L"OnProcResumed");
-
-	this->_m_mutex.unlock();
 }
 
 void ProcessMonitor::_MonitoringProcess() {
-	DWORD exit_code = STILL_ACTIVE;
-	DWORD old_exit_code = STILL_ACTIVE;
+	DWORD exit_code;
 
-	while(1) {
-		this->_m_mutex.lock();
-
-		if(!this->_watching){
-			this->_m_mutex.unlock();
-			break;
-		}
-
-		std::wstringstream ss;		
-		// looking if state was changed
-		if(GetExitCodeProcess(this->_hande, &exit_code) && exit_code != old_exit_code) {
-			switch(exit_code) { 
-				case EXIT_SUCCESS:
+	while(true) {
+		// wait end of process
+		if(this->_handle != NULL && WaitForSingleObject(this->_handle, 1000) == WAIT_OBJECT_0) {
+			// get exit code
+			if(GetExitCodeProcess(this->_handle, &exit_code)) {
+				std::lock_guard<std::mutex> lock(this->_m_mutex);
+				if(exit_code == EXIT_SUCCESS) {
 					this->_state = State::SUCCESS_EXIT;
-					ss << L"The process(id = ";
-					ss << this->_p_id;
-					ss << L") is not completed successfully"; 
-					LOG_IT(ss.str());
-					ss.clear();
+					LOG_IT(_FormatedString(L"The process(id = :p_id) is completed successfully", this->_p_id));
 					EMIT(L"OnProcExitSuccess", this->_p_id);
-				break;
-
-				case EXIT_FAILURE:
+				} else {
 					this->_state = State::FAILE_EXIT;
-					ss << L"The process(id = ";
-					ss << this->_p_id;
-					ss << L") is not completed successfully"; 
-					LOG_IT(ss.str());
+					LOG_IT(_FormatedString(L"The process(id = :p_id) isn't completed successfully", this->_p_id));
 					EMIT(L"OnProcExitFailure", this->_p_id);
-				break;
+				}		
 			}
-		
-			old_exit_code = exit_code;
-			// if process was exited that restart it
-			if( (exit_code == EXIT_SUCCESS) || (exit_code == EXIT_FAILURE) ) {
-				this->_m_mutex.unlock();
-				_Restart();	
-				continue;
-			}
+			_Restart();
 		}
 
-		this->_m_mutex.unlock();
+		if(!this->_watching) break; 
 	}
 }
 
 void ProcessMonitor::_Restart() {
-	CloseHandle(this->_hande);
-
 	this->_m_mutex.lock();
-	this->_state = State::RESTARTING;
-	this->_m_mutex.unlock();
 	
+	if(this->_handle != NULL) {
+		CloseHandle(this->_handle);
+		this->_handle = NULL;
+	}
+	this->_state = State::RESTARTING;
 	LOG_IT(L"Restarting process( cmd line = "+this->_cmd_line+L")");
 	EMIT(L"OnProcRestart", this->_p_id);
+
+	this->_m_mutex.unlock();
+	
 	Start();
 }
 
 
 void ProcessMonitor::Restart() {
+	// simply terminate process and _MonitoringProcess restart it 
+	if(this->_state == State::WORKING){ 
+		TerminateProcess(this->_handle, 0);
+	} else {
 	// if process isn't started - Start it
-	if(!this->_monitor_thread.joinable()) {
 		Start();
-	} else { 
-	// simply terminate the process and _MonitoringProcess restart it 
-		TerminateProcess(this->_hande, 0);
 	}
 }
 
@@ -189,9 +152,8 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
     HANDLE handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, p_id);
     DWORD err = 0;
     if (handle == NULL) {
-		std::wstringstream ss;
-		ss << L"Can't open process(ID = " << p_id << L")";
-		LOG_IT((std::wstring)ss.str());
+		LOG_IT(_FormatedString(L"Can't open process(Id = :p_id)", p_id));
+		EMIT(L"OnProcAttachFailure", p_id);
 		return;
 	}
 
@@ -228,7 +190,8 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         err = query(handle, 0, &pbi, sizeof(pbi), NULL);
         if (err != 0) {
             LOG_IT(L"NtWow64QueryInformationProcess64 failed");
-            CloseHandle(handle);
+            EMIT(L"OnProcAttachFailure", p_id);
+			CloseHandle(handle);
             return;
         }
 
@@ -237,6 +200,7 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         err = read(handle, pbi.PebBaseAddress, peb, peb_size, NULL);
         if (err != 0) {
             LOG_IT(L"NtWow64ReadVirtualMemory64 PEB failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -246,6 +210,7 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         err = read(handle, parameters, pp, pp_size, NULL);
         if (err != 0) {
             LOG_IT(L"NtWow64ReadVirtualMemory64 Parameters failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -256,6 +221,7 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         err = read(handle, p_command_line->Buffer, cmd_line, p_command_line->MaximumLength, NULL);
         if (err != 0) {
             LOG_IT(L"NtWow64ReadVirtualMemory64 Parameters failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -270,6 +236,7 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         err = query(handle, 0, &pbi, sizeof(pbi), NULL);
         if (err != 0) {
             LOG_IT(L"NtQueryInformationProcess failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -277,6 +244,7 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         // read PEB
         if (!ReadProcessMemory(handle, pbi.PebBaseAddress, peb, peb_size, NULL)) {
             LOG_IT(L"ReadProcessMemory PEB failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -284,7 +252,8 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         // read process parameters
         PBYTE* parameters = (PBYTE*)*(LPVOID*)(peb + process_parameters_offset); // address in remote process adress space
         if (!ReadProcessMemory(handle, parameters, pp, pp_size, NULL)) {
-            LOG_IT(L"ReadProcessMemory Parameters failed\n");
+            LOG_IT(L"ReadProcessMemory Parameters failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
@@ -294,21 +263,19 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
         cmd_line = (PWSTR)new wchar_t(p_command_line->MaximumLength);
         if (!ReadProcessMemory(handle, p_command_line->Buffer, cmd_line, p_command_line->MaximumLength, NULL)) {
             LOG_IT(L"ReadProcessMemory Parameters failed");
+			EMIT(L"OnProcAttachFailure", p_id);
             CloseHandle(handle);
             return;
         }
     }
-
-	std::wstringstream ss;
-	ss << L"Attached to process(pId = " << p_id << L")";
-	LOG_IT((std::wstring)ss.str());
+	LOG_IT(_FormatedString(L"Attached to process(pId = :p_id)", p_id));
 	EMIT(L"OnProcAttached", p_id);
 
 	this->_m_mutex.lock();
 	
 	this->_cmd_line = cmd_line;
-	if(this->_hande != NULL) CloseHandle(this->_hande);
-	this->_hande = handle;
+	if(this->_handle != NULL) CloseHandle(this->_handle);
+	this->_handle = handle;
 	this->_p_id = p_id;
 	this->_state = State::WORKING;
 	
@@ -323,70 +290,58 @@ void ProcessMonitor::AttachTo(DWORD p_id) {
 
 bool ProcessMonitor::_StopResumeProcess(DWORD p_id, bool resume)
 { 
-    HANDLE        thread_snap = NULL; 
-    THREADENTRY32 te32        = {0}; 
+    HANDLE thread_snap = NULL; 
+    THREADENTRY32 te32 = {0}; 
 	bool return_value;
 
     // Take a snapshot of all threads currently in the system. 
     thread_snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0); 
-    if (thread_snap == INVALID_HANDLE_VALUE) 
-        return false; 
+    if (thread_snap == INVALID_HANDLE_VALUE)  return false; 
  
-    // fill in the size of the structure  
     te32.dwSize = sizeof(THREADENTRY32); 
 	
     // walk the thread snapshot to find all threads of the process 
-    if (Thread32First(thread_snap, &te32)) 
-    { 
-        do 
-        { 
-            if (te32.th32OwnerProcessID == p_id) 
-            {
+    if (Thread32First(thread_snap, &te32)) { 
+		do { 
+			if (te32.th32OwnerProcessID == p_id) {
 				HANDLE thread_handle = OpenThread(THREAD_SUSPEND_RESUME, false, te32.th32ThreadID);
-				if (resume)
-				{
+				if (resume) {
 					ResumeThread(thread_handle);
-				}
-				else
-				{
+				} else {
 					SuspendThread(thread_handle);
 				}
 				CloseHandle(thread_handle);
             } 
-        }
-        while (Thread32Next(thread_snap, &te32)); 
+        } while (Thread32Next(thread_snap, &te32)); 
         
 		return_value = true;
     } else {
 		return_value = false;
 	}
-
 	CloseHandle (thread_snap);
 
     return return_value; 
 }
 
 void ProcessMonitor::Stop() {
-	// get current process id
-	this->_m_mutex.lock();
-	DWORD p_id = this->_p_id;
-	this->_m_mutex.unlock();
-
-	std::wstringstream ss;
-
-	if(this->_StopResumeProcess(p_id, false)) {
-		// set state "Stopped"
-		this->_m_mutex.lock();
+	std::lock_guard<std::mutex> lock(this->_m_mutex);
+	if(this->_StopResumeProcess(this->_p_id, false)) {
 		this->_state = State::STOPPED;
-		this->_m_mutex.unlock();
-
-		ss << L"Process(id = " << p_id << L") stopped";
-		LOG_IT(ss.str());
-		EMIT(L"OnProcStopped", p_id);
+		LOG_IT(_FormatedString(L"Process(id = :p_id) stopped", this->_p_id));
+		EMIT(L"OnProcStopped", this->_p_id);
 	} else {
-		ss << L"Unable to stop the process(id = " << p_id;
-		LOG_IT(ss.str());
+		LOG_IT(_FormatedString(L"Unable to stop the process(id = :p_id)", this->_p_id));
 	}
+}
+
+std::wstring ProcessMonitor::_FormatedString(std::wstring source, int p_id) {
+	size_t pos = source.find(L":p_id");
+	if(pos != std::wstring::npos) {
+		std::wstringstream ss;
+		ss << p_id;
+		source.replace(pos, 5, ss.str());
+	}
+	return source;
 }
 
 }

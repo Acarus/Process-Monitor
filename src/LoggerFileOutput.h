@@ -10,10 +10,10 @@ namespace monitor {
 @brief Class that allow to write logs to file
 */
 class LoggerFileOutput : public LoggerOutput {
-  std::wstring _log_file;
+  std::wofstream _log_file;
 
  public:
-  LoggerFileOutput(std::wstring log_file = L"log.txt");
+  LoggerFileOutput(std::wstring file_name = L"");
   ~LoggerFileOutput();
 /**
 @brief Write log into file
@@ -25,7 +25,7 @@ class LoggerFileOutput : public LoggerOutput {
 @brief Set path to file, where we will write logs
 @param log_file path to file
 */
-  void SetFile(const std::wstring& log_file);
+  void SetFile(const std::wstring& file_name);
   
 };
 
