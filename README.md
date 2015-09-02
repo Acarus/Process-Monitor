@@ -4,8 +4,7 @@ API that allows monitoring processes in Windows. Main features:
 * allow to retrieve process info (handle, id, status (is working, restarting,
 stopped));
 * allow to stop process via method call (without restart) and start it again;
-* log all events (start, crash, manual shutdown) to EventLog or file;
-Logger instance must be configurable OOP-style;
+* log all events (start, crash, manual shutdown);
 * allow to add callbacks to all events. For example OnProcStart, OnProcCrash, OnProcManuallyStopped;
 * all methods must be thread-safe;
 * all resources (process handles, threads, file handles, logger, etc.) must
